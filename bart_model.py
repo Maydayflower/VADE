@@ -156,6 +156,12 @@ class MultiModalBartForMASBA(nn.Module):
         
         self.text_vad_projection = nn.Sequential(
             nn.Linear(self.text_dim+3, self.text_dim),
+            # nn.LayerNorm(self.text_dim),
+            # nn.GELU(),
+            # nn.Dropout(0.1),
+            # nn.Linear(self.text_dim, self.text_dim),
+            # nn.LayerNorm(self.text_dim),
+            # nn.Dropout(0.1)
         )
 
         # 兼容CLIP VAD链
@@ -164,10 +170,35 @@ class MultiModalBartForMASBA(nn.Module):
         self.clip_model.load_state_dict(torch.load("/workspace/compare_model/bart/clip/output/clip_alignment_model/best_clip_alignment.pt", map_location=device))
         self.image_vad_predictor = ImageFeatureVADModel(input_dim=512, hidden_dim=256)
         self.image_vad_predictor.load_state_dict(torch.load("/workspace/compare_model/bart/clip/output/vad_downstream_model/best_vad_downstream.pt", map_location=device))
-        self.image_encoder = CLIPModel.from_pretrained(self.clip_alignment_model_path)
 
-        self.processor = CLIPProcessor.from_pretrained(self.clip_alignment_model_path)
+        # 融合后特征的处理
+        # self.fusion = nn.Sequential(
+        #     nn.Linear(self.text_dim * 2, self.text_dim * 2),
+        #     nn.ReLU(),
+        #     nn.LayerNorm(self.text_dim * 2),
+        #     nn.Dropout(0.2),
+        #     nn.Linear(self.text_dim * 2, self.text_dim),
+        #     nn.ReLU(),
+        #     nn.LayerNorm(self.text_dim),
+        #     nn.Dropout(0.1)
+        # )
         self.fusion = nn.Linear(self.text_dim * 2, self.text_dim)
+        # 分类器
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(self.text_dim, self.text_dim // 2),
+        #     nn.LayerNorm(self.text_dim // 2),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.1),
+        #     nn.Linear(self.text_dim // 2, self.text_dim // 4),
+        #     nn.LayerNorm(self.text_dim // 4),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.1),
+        #     nn.Linear(self.text_dim // 4, 64),
+        #     nn.LayerNorm(64),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.1),
+        #     nn.Linear(64, num_labels)
+        # )
         self.classifier = nn.Linear(self.text_dim, num_labels)
         self.combine_classifier = nn.Linear(self.text_dim * 2 + 3, num_labels)
         self.text_classifier = nn.Linear(self.text_dim, num_labels)
@@ -233,15 +264,18 @@ class MultiModalBartForMASBA(nn.Module):
 
             image_features = self.image_projection(image_features)  # (batch, text_dim)
             image_features = torch.cat([image_features, image_vad_preds], dim=1)  # (batch, text_dim+3)
+            # image_features = self.image_vad_projection(image_features)  # (batch, text_dim)
         else:
             image_features = torch.zeros((text_hidden.size(0), self.text_dim+ 3), device=text_hidden.device, dtype=text_hidden.dtype)
         
         
         # 融合卷积后的文本特征和图像特征
         fused_features = torch.cat([conv_out_pooled, image_features], dim=1)
+        # combined_features = self.fusion(fused_features)  # (batch, text_dim)
         
         # 分类
-        logits = self.combine_classifier(fused_features)
+        # logits = self.combine_classifier(fused_features)
+        logits = self.text_classifier(conv_out_pooled)
         loss = None
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
